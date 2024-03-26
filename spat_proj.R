@@ -1,0 +1,134 @@
+# Data was converted from address with postal code, to lat/lon, to 
+# easting/northing coordinates based on SVY21 projection
+
+library(sf)
+library(spatstat)
+library(readr)
+
+# Read data
+hawker_data <- read.csv("coords2.csv")
+View(hawker_data)
+class(hawker_data) # needs to be changed to an sf object
+
+# convert to sf object
+hawker_coords.sf <- st_as_sf(hawker_data, coords = c("Easting", "Northing")) ; class(hawker_coords.sf) ; st_crs(hawker_coords.sf)
+
+# prepare bounding region (map of Singapore)
+sg_regions = st_read("MP14_PLNG_AREA_WEB_PL.shp")
+table(st_is_valid(sg_regions))
+sg_regions = st_make_valid(sg_regions)
+class(sg_regions)
+st_crs(sg_regions)$proj
+
+# set CRS of hawker_coords.sf sf object to that of bounding region
+hawker_coords <- st_set_crs(hawker_coords.sf, st_crs(sg_regions))
+
+# check for equality in CRS
+isTRUE(all.equal(st_crs(sg_regions), st_crs(hawker_coords)))
+
+# check conditions before conversion to ppp object
+st_is_longlat(hawker_coords)
+st_crs(hawker_coords)
+plot(hawker_coords)
+
+# convert to ppp object
+(hawker_coords.ppp <- as.ppp(hawker_coords))
+plot(hawker_coords.ppp, pch=20, size=0.5)
+st_bbox(hawker_coords) # to be changed to that of bounding region of sg_regions
+
+plot(st_geometry(sg_regions))
+hawker_coords.ppp
+
+# create the window
+sg = st_union(sg_regions) # sg outline
+(sg.owin = as.owin(sg)) # converting outline to owin object
+
+# set sg outline as window of ppp object
+Window(hawker_coords.ppp) = sg.owin  #set outline as bounding box
+hawker_coords.ppp
+plot(hawker_coords.ppp, pch=20, size=0.5)
+
+# check for duplicates
+duplicated(hawker_coords.ppp) # no duplicates, no need to perturb coordinates
+
+###############
+# QC analysis #
+###############
+
+# prepare the quadrats and view
+(qc = quadratcount(hawker_coords.ppp, nx=10, ny=10)) # not poisson distributed
+class(qc)
+plot(qc)
+
+# Chi2 test
+(quad.test = quadrat.test(hawker_coords.ppp, nx=10, ny=10))
+# Reject the null of qc~Po(lambda) at 5% level.
+
+# Estimate lambda (under null)
+# View(quad.test) # inspect the quad.test list object.
+quad.test$observed # observed number of points in each quadrat
+quad.test$parameter # number of df
+n = quad.test$parameter+1
+
+# Average number of points per quadrat
+(lambda = sum(quad.test$observed)/n)
+
+
+# Null vs. observed distribution of counts
+(observed = table(quad.test$observed))
+(max.num = max(quad.test$observed)) # maximum number of observations in a single quadrat
+(max.freq = max(observed)) # maximum frequency
+plot(c(0,max.num),c(0,max.freq), type="n", # axes values
+     xlab="Number of incidents per quadrat (Red=Observed, Blue=Expected)", 
+     ylab="Frequency of Occurances", main="Quadrat counts: Observed vs Expected")
+points(dpois(0:max.num, lambda=lambda)*n, type="l", col="Blue", lwd=2)
+points(observed, col="Red", type="l", lwd=2)
+# Point pattern does not follow a HPP.
+
+
+###########################
+# Kernel Density Estimate #
+###########################
+
+plot(density(hawker_coords.ppp, sigma=500))
+plot(density(hawker_coords.ppp, sigma=1000)) # kernels are same for both axes
+
+(hawker_coords.bw = bw.diggle(hawker_coords.ppp))
+hawker_coords.kde1 = density(hawker_coords.ppp, sigma=bw.diggle(hawker_coords.ppp))
+plot(hawker_coords.kde1)
+
+
+#############################
+# Nearest Neighbor distance #
+#############################
+
+
+clarkevans(hawker_coords.ppp, correction="none")
+clarkevans.test(hawker_coords.ppp, correction="none", alternative="less")
+# alternative: R < 1
+
+######################
+# K-function analysis#
+######################
+
+# K-function
+hawker_coords_kf = Kest(hawker_coords.ppp,correction="border"); plot(hawker_coords_kf)
+par(mfrow = c(3, 2))
+hawker_coords_kf.env = envelope(hawker_coords.ppp, Kest, correction="border"); plot(hawker_coords_kf.env) 
+
+# L-function
+hawker_coords_lf.env = envelope(hawker_coords.ppp, Lest, correction="border"); plot(hawker_coords_lf.env) 
+
+# G-function (is a CDF)
+hawker_coords_gf.env = envelope(hawker_coords.ppp, Gest, correction="best"); plot(hawker_coords_gf.env) 
+
+# F-function
+hawker_coords_ff.env = envelope(hawker_coords.ppp, Fest, correction="all"); plot(hawker_coords_ff.env)
+
+# J-function
+hawker_coords_jf.env = envelope(hawker_coords.ppp, Jest, correction="all"); plot(hawker_coords_jf.env)
+
+
+
+
+
